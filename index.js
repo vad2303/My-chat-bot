@@ -1,26 +1,45 @@
-// index.js (Nâng cao)
+// index.js (Tích hợp Gemini)
 'use strict';
 
 // 1. IMPORT CÁC THƯ VIỆN
 const express = require('express');
 const axios = require('axios');
-const app = express(); // Khởi tạo app express
+const app = express();
+
+// --- IMPORT THƯ VIỆN MỚI CỦA GEMINI ---
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+// -------------------------------------
 
 // 2. CẤU HÌNH CÁC BIẾN MÔI TRƯỜNG
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PORT = process.env.PORT || 3000;
 
-// 3. MIDDLEWARE
+// --- BIẾN MÔI TRƯỜNG MỚI CỦA GEMINI ---
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// ------------------------------------
+
+// 3. KHỞI TẠO CÁC CLIENT
 app.use(express.json());
+
+// --- KHỞI TẠO GEMINI ---
+let genAI;
+let model;
+if (GEMINI_API_KEY) {
+    genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    model = genAI.getGenerativeModel({ model: "gemini-1.5-flash"}); // Dùng model flash cho nhanh
+    console.log("Đã khởi tạo Gemini thành công.");
+} else {
+    console.error("Chưa cung cấp GEMINI_API_KEY. Bot sẽ không hoạt động với AI.");
+}
+// -----------------------
 
 // 4. KHỞI TẠO MÁY CHỦ
 app.listen(PORT, () => console.log(`Chatbot đang lắng nghe tại cổng ${PORT}`));
 
-// -------------------------------------------------------------------
-
-// XÁC THỰC WEBHOOK (Giữ nguyên, không thay đổi)
+// 5. XÁC THỰC WEBHOOK (Giữ nguyên)
 app.get('/webhook', (req, res) => {
+    // ... (Toàn bộ code xác thực webhook giữ nguyên như cũ) ...
     let mode = req.query['hub.mode'];
     let token = req.query['hub.verify_token'];
     let challenge = req.query['hub.challenge'];
@@ -38,21 +57,17 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// NHẬN TIN NHẮN TỪ NGƯỜỜI DÙNG (Giữ nguyên, không thay đổi)
+// 6. NHẬN TIN NHẮN TỪ NGƯỜI DÙNG (Giữ nguyên)
 app.post('/webhook', (req, res) => {
     let body = req.body;
-
     if (body.object === 'page') {
         body.entry.forEach(function(entry) {
             let webhook_event = entry.messaging[0];
             let sender_psid = webhook_event.sender.id;
 
-            // Kiểm tra xem sự kiện là tin nhắn văn bản hay "postback" (khi bấm nút)
-            if (webhook_event.message) {
+            if (webhook_event.message && webhook_event.message.text) {
+                // Chỉ xử lý tin nhắn văn bản
                 handleMessage(sender_psid, webhook_event.message);
-            } else if (webhook_event.postback) {
-                // (Chúng ta sẽ xử lý postback ở phiên bản sau)
-                // handlePostback(sender_psid, webhook_event.postback);
             }
         });
         res.status(200).send('EVENT_RECEIVED');
@@ -62,56 +77,46 @@ app.post('/webhook', (req, res) => {
 });
 
 // -------------------------------------------------------------------
-// PHẦN NÂNG CẤP BẮT ĐẦU TỪ ĐÂY
+// PHẦN NÂNG CẤP GEMINI
 // -------------------------------------------------------------------
 
 /**
- * 5. HÀM XỬ LÝ TIN NHẮN (NÂNG CẤP)
- * Quyết định xem bot trả lời gì dựa trên tin nhắn nhận được.
+ * 7. HÀM XỬ LÝ TIN NHẮN (VIẾT LẠI VỚI GEMINI)
+ * Hàm này giờ sẽ là "async" để chờ Gemini trả lời
  */
-function handleMessage(sender_psid, received_message) {
-    let response; // Đây là tin nhắn bot sẽ gửi
-    let text = received_message.text;
+async function handleMessage(sender_psid, received_message) {
+    let response;
+    let user_message = received_message.text;
 
-    // Chuyển tin nhắn về chữ thường để dễ so sánh
-    let lowerCaseText = text ? text.toLowerCase() : '';
+    // Nếu chưa cấu hình API Key, trả lời mặc định
+    if (!model) {
+        response = { 'text': 'Xin lỗi, bộ não AI của tôi chưa được kết nối.' };
+        callSendAPI(sender_psid, response);
+        return;
+    }
 
-    // === XỬ LÝ LOGIC (KEYWORD MATCHING) ===
+    try {
+        // --- BẮT ĐẦU GỌI GEMINI ---
+        console.log(`Đang gửi tới Gemini: "${user_message}"`);
+        
+        // (Nâng cao: Thêm "bối cảnh" cho Gemini)
+        const prompt = `Bạn là một chatbot trợ lý thân thiện tên là "Bot". 
+                       Người dùng nói: "${user_message}"
+                       Hãy trả lời người dùng:`;
 
-    if (lowerCaseText.includes('chào') || lowerCaseText.includes('hi') || lowerCaseText.includes('hello')) {
-        // 1. Nếu người dùng chào
-        response = {
-            'text': `Chào bạn! Mình là bot. Bạn cần giúp gì?`,
-            // Thêm các nút "Trả lời nhanh"
-            'quick_replies': [
-                {
-                    'content_type': 'text',
-                    'title': 'Bạn là ai?', // Tiêu đề nút
-                    'payload': 'FAQ_WHO_ARE_YOU', // Dữ liệu gửi lại (giống ID)
-                },
-                {
-                    'content_type': 'text',
-                    'title': 'Cần hỗ trợ',
-                    'payload': 'NEED_SUPPORT',
-                }
-            ]
-        };
-    } else if (received_message.quick_reply) {
-        // 2. Nếu người dùng bấm vào một nút "Trả lời nhanh"
-        let payload = received_message.quick_reply.payload;
+        const result = await model.generateContent(prompt);
+        const geminiResponse = await result.response;
+        const gemini_text = geminiResponse.text();
 
-        if (payload === 'FAQ_WHO_ARE_YOU') {
-            response = { 'text': 'Mình là chatbot được lập trình bằng Node.js!' };
-        } else if (payload === 'NEED_SUPPORT') {
-            response = { 'text': 'Bạn vui lòng để lại tin nhắn, mình sẽ báo admin.' };
-        } else {
-            response = { 'text': 'Cảm ơn bạn đã chọn!' };
-        }
-    } else {
-        // 3. Nếu không khớp từ khóa nào (mặc định)
-        response = {
-            'text': `Bạn đã gửi: "${text}". Hiện mình chưa hiểu lắm. Gõ "chào" để bắt đầu nhé.`
-        };
+        console.log(`Gemini trả lời: "${gemini_text}"`);
+        // --- KẾT THÚC GỌI GEMINI ---
+
+        // Gói câu trả lời của Gemini để gửi cho người dùng
+        response = { 'text': gemini_text };
+
+    } catch (error) {
+        console.error('LỖI KHI GỌI GEMINI:', error);
+        response = { 'text': 'Xin lỗi, tôi đang gặp chút lỗi khi suy nghĩ. Bạn thử lại sau nhé.' };
     }
 
     // Gửi tin nhắn trả lời
@@ -120,19 +125,14 @@ function handleMessage(sender_psid, received_message) {
 
 
 /**
- * 6. HÀM GỬI TIN NHẮN QUA GRAPH API (NÂNG CẤP)
- * Gửi tin nhắn trả lời (có thể là text hoặc quick replies)
+ * 8. HÀM GỬI TIN NHẮN QUA GRAPH API (Giữ nguyên)
  */
 async function callSendAPI(sender_psid, response) {
-    // Thông tin request
     let request_body = {
-        'recipient': {
-            'id': sender_psid
-        },
-        'message': response // Response bây giờ có thể chứa text, quick_replies, v.v.
+        'recipient': { 'id': sender_psid },
+        'message': response
     };
 
-    // URL của Graph API
     const url = `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
 
     try {
