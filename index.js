@@ -27,7 +27,7 @@ let genAI;
 let model;
 if (GEMINI_API_KEY) {
     genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest"});
+    model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-latest"});
     console.log("Đã khởi tạo Gemini thành công.");
 } else {
     console.error("Chưa cung cấp GEMINI_API_KEY. Bot sẽ không hoạt động với AI.");
