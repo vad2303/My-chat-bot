@@ -1,45 +1,26 @@
-// index.js (Tích hợp Gemini)
+// index.js
 'use strict';
 
 // 1. IMPORT CÁC THƯ VIỆN
 const express = require('express');
 const axios = require('axios');
-const app = express();
-
-// --- IMPORT THƯ VIỆN MỚI CỦA GEMINI ---
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-// -------------------------------------
+const app = express(); // Khởi tạo app express
 
 // 2. CẤU HÌNH CÁC BIẾN MÔI TRƯỜNG
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PORT = process.env.PORT || 3000;
 
-// --- BIẾN MÔI TRƯỜNG MỚI CỦA GEMINI ---
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-// ------------------------------------
-
-// 3. KHỞI TẠO CÁC CLIENT
+// 3. MIDDLEWARE
 app.use(express.json());
 
-// --- KHỞI TẠO GEMINI ---
-let genAI;
-let model;
-if (GEMINI_API_KEY) {
-    genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-latest"});
-    console.log("Đã khởi tạo Gemini thành công.");
-} else {
-    console.error("Chưa cung cấp GEMINI_API_KEY. Bot sẽ không hoạt động với AI.");
-}
-// -----------------------
-
-// 4. KHỞI TẠO MÁY CHỦ;
+// 4. KHỞI TẠO MÁY CHỦ
 app.listen(PORT, () => console.log(`Chatbot đang lắng nghe tại cổng ${PORT}`));
 
-// 5. XÁC THỰC WEBHOOK (Giữ nguyên)
+// -------------------------------------------------------------------
+
+// 5. XÁC THỰC WEBHOOK (Giữ nguyên, không thay đổi)
 app.get('/webhook', (req, res) => {
-    // ... (Toàn bộ code xác thực webhook giữ nguyên như cũ) ...
     let mode = req.query['hub.mode'];
     let token = req.query['hub.verify_token'];
     let challenge = req.query['hub.challenge'];
@@ -60,14 +41,17 @@ app.get('/webhook', (req, res) => {
 // 6. NHẬN TIN NHẮN TỪ NGƯỜI DÙNG (Giữ nguyên)
 app.post('/webhook', (req, res) => {
     let body = req.body;
+
     if (body.object === 'page') {
         body.entry.forEach(function(entry) {
             let webhook_event = entry.messaging[0];
             let sender_psid = webhook_event.sender.id;
 
-            if (webhook_event.message && webhook_event.message.text) {
-                // Chỉ xử lý tin nhắn văn bản
+            // Kiểm tra xem sự kiện là tin nhắn văn bản hay "postback"
+            if (webhook_event.message) {
                 handleMessage(sender_psid, webhook_event.message);
+            } else if (webhook_event.postback) {
+                // (Chưa xử lý)
             }
         });
         res.status(200).send('EVENT_RECEIVED');
@@ -76,60 +60,73 @@ app.post('/webhook', (req, res) => {
     }
 });
 
-// -------------------------------------------------------------------
-// PHẦN NÂNG CẤP GEMINI
-// -------------------------------------------------------------------
-
-/**
- * 7. HÀM XỬ LÝ TIN NHẮN (VIẾT LẠI VỚI GEMINI)
- * Hàm này giờ sẽ là "async" để chờ Gemini trả lời
- */
-async function handleMessage(sender_psid, received_message) {
+function handleMessage(sender_psid, received_message) {
     let response;
-    let user_message = received_message.text;
+    let text = received_message.text;
+    let lowerCaseText = text ? text.toLowerCase() : '';
 
-    // Nếu chưa cấu hình API Key, trả lời mặc định
-    if (!model) {
-        response = { 'text': 'Xin lỗi, bộ não AI của tôi chưa được kết nối.' };
-        callSendAPI(sender_psid, response);
-        return;
-    }
+    // === XỬ LÝ LOGIC (KEYWORD MATCHING) ===
 
-    try {
-        // --- BẮT ĐẦU GỌI GEMINI ---
-        console.log(`Đang gửi tới Gemini: "${user_message}"`);
+    if (lowerCaseText.includes('chào') || lowerCaseText.includes('hi') || lowerCaseText.includes('hello')) {
+
+        response = {
+ 
+            'text': `Chào bạn! Mình là bot của Vũ Anh Dũng. Bạn cần giúp gì?`,
+            'quick_replies': [
+                {
+                    'content_type': 'text',
+                    'title': 'Bạn là ai?', // Tiêu đề nút
+                    'payload': 'FAQ_WHO_ARE_YOU', // ID của nút
+                },
+                {
+                    'content_type': 'text',
+                    'title': 'Cần hỗ trợ',
+                    'payload': 'NEED_SUPPORT',
+                }
+            ]
+        };
+    } else if (received_message.quick_reply) {
+
+        let payload = received_message.quick_reply.payload;
+
+        if (payload === 'FAQ_WHO_ARE_YOU') {
+            response = { 'text': 'Mình là chatbot của Vũ Anh Dũng, được lập trình bằng Node.js!' };
+        } else if (payload === 'NEED_SUPPORT') {
+            response = { 'text': 'Bạn vui lòng để lại tin nhắn, mình sẽ báo anh Dũng.' };
+        } else {
+            response = { 'text': 'Cảm ơn bạn đã chọn!' };
+        }
+    } else if (received_message.quick_reply) {
+    } else if (lowerCaseText.includes('tạm biệt') || lowerCaseText.includes('bye')) {
+        response = {
+            'text': 'Tạm biệt! Hẹn gặp lại bạn sau. 👋'
+        };
         
-        // (Nâng cao: Thêm "bối cảnh" cho Gemini)
-        const prompt = `Bạn là một chatbot trợ lý thân thiện tên là "Bot". 
-                       Người dùng nói: "${user_message}"
-                       Hãy trả lời người dùng:`;
-
-        const result = await model.generateContent(prompt);
-        const geminiResponse = await result.response;
-        const gemini_text = geminiResponse.text();
-
-        console.log(`Gemini trả lời: "${gemini_text}"`);
-        // --- KẾT THÚC GỌI GEMINI ---
-
-        // Gói câu trả lời của Gemini để gửi cho người dùng
-        response = { 'text': gemini_text };
-
-    } catch (error) {
-        console.error('LỖI KHI GỌI GEMINI:', error);
-        response = { 'text': 'Xin lỗi, tôi đang gặp chút lỗi khi suy nghĩ. Bạn thử lại sau nhé.' };
+    } else if (lowerCaseText.includes('mã sinh viên') || lowerCaseText.includes('bao nhiêu tiền')) {
+        // 4. Nếu người dùng hỏi giá
+        response = {
+            'text': 'Mã sinh viên của Dũng là 2121051487'
+        };
+        } else if (lowerCaseText.includes('trường') || lowerCaseText.includes('TỪ_KHÓA_2')) {
+        // Câu trả lời cho từ khóa này
+        response = {
+            'text': 'Đại học Mỏ - Địa Chất'
+        };
+    } else {
+        response = {
+            'text': `Bạn đã gửi: "${text}". Hiện mình chưa hiểu lắm. Gõ "chào" để bắt đầu nhé.`
+        };
     }
 
     // Gửi tin nhắn trả lời
     callSendAPI(sender_psid, response);
 }
 
-
-/**
- * 8. HÀM GỬI TIN NHẮN QUA GRAPH API (Giữ nguyên)
- */
 async function callSendAPI(sender_psid, response) {
     let request_body = {
-        'recipient': { 'id': sender_psid },
+        'recipient': {
+            'id': sender_psid
+        },
         'message': response
     };
 
