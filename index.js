@@ -27,14 +27,14 @@ let genAI;
 let model;
 if (GEMINI_API_KEY) {
     genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    model = genAI.getGenerativeModel({ model: "gemini-1.5-flash"}); // Dùng model flash cho nhanh
+    model = genAI.getGenerativeModel({ model: "gemini-pro"}); // Dùng model flash cho nhanh
     console.log("Đã khởi tạo Gemini thành công.");
 } else {
     console.error("Chưa cung cấp GEMINI_API_KEY. Bot sẽ không hoạt động với AI.");
 }
 // -----------------------
 
-// 4. KHỞI TẠO MÁY CHỦ
+// 4. KHỞI TẠO MÁY CHỦ;
 app.listen(PORT, () => console.log(`Chatbot đang lắng nghe tại cổng ${PORT}`));
 
 // 5. XÁC THỰC WEBHOOK (Giữ nguyên)
